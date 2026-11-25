@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 	"time"
 
@@ -92,6 +93,25 @@ func newMockCollector() *SystemCollector {
 			},
 			now:          func() time.Time { return fixedTime },
 			cpuSampleDur: 0,
+			netInterfaces: func() ([]net.Interface, error) {
+				return []net.Interface{
+					{Name: "lo", Flags: net.FlagUp | net.FlagLoopback},
+					{Name: "eth0", Flags: net.FlagUp},
+					{Name: "eth1", Flags: 0}, // down
+				}, nil
+			},
+			ifaceAddrs: func(iface net.Interface) ([]net.Addr, error) {
+				switch iface.Name {
+				case "eth0":
+					return []net.Addr{
+						&net.IPNet{IP: net.ParseIP("192.168.1.50"), Mask: net.CIDRMask(24, 32)},
+						&net.IPNet{IP: net.ParseIP("fe80::1"), Mask: net.CIDRMask(64, 128)}, // link-local skipped
+						&net.IPNet{IP: net.ParseIP("2001:db8::10"), Mask: net.CIDRMask(64, 128)},
+					}, nil
+				default:
+					return nil, nil
+				}
+			},
 		},
 	}
 }
@@ -155,21 +175,46 @@ func TestSystemCollector_Disks(t *testing.T) {
 	}
 }
 
-func TestSystemCollector_All(t *testing.T) {
+func TestSystemCollector_Network(t *testing.T) {
 	col := newMockCollector()
-	report, err := col.All(context.Background(), "")
+	addrs, err := col.Network(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if report.OS == nil || report.CPU == nil || report.Memory == nil || len(report.Disks) != 2 {
-		t.Fatalf("incomplete report: %+v", report)
+	if len(addrs) != 2 {
+		t.Fatalf("expected 2 addresses (IPv4 + global IPv6 on eth0), got %d: %+v", len(addrs), addrs)
+	}
+	if addrs[0].Interface != "eth0" || addrs[0].IP != "192.168.1.50" || addrs[0].Version != "IPv4" {
+		t.Fatalf("unexpected first address: %+v", addrs[0])
+	}
+	if addrs[1].IP != "2001:db8::10" || addrs[1].Version != "IPv6" {
+		t.Fatalf("unexpected second address: %+v", addrs[1])
+	}
+}
+
+func TestSystemCollector_All(t *testing.T) {
+	col := newMockCollector()
+	report, err := col.All(context.Background(), "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.OS == nil || report.CPU == nil || report.Memory == nil || len(report.Disks) != 2 || len(report.Network) != 0 {
+		t.Fatalf("unexpected report: %+v", report)
+	}
+
+	reportWithNet, err := col.All(context.Background(), "", true)
+	if err != nil {
+		t.Fatalf("unexpected error with network: %v", err)
+	}
+	if len(reportWithNet.Network) != 2 {
+		t.Fatalf("expected 2 network addresses when includeNetwork=true, got %+v", reportWithNet.Network)
 	}
 
 	// Verify error aggregation when one provider fails.
 	col.p.cpuPercent = func(context.Context, time.Duration, bool) ([]float64, error) {
 		return nil, errors.New("cpu read failed")
 	}
-	report, err = col.All(context.Background(), "")
+	report, err = col.All(context.Background(), "", false)
 	if err == nil {
 		t.Fatal("expected error when cpu provider fails")
 	}

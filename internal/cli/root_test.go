@@ -17,6 +17,7 @@ type stubCollector struct {
 	cpuInfo *collector.CPUInfo
 	memInfo *collector.MemoryInfo
 	disks   []collector.DiskInfo
+	network []collector.NetworkAddress
 	err     error
 }
 
@@ -42,17 +43,25 @@ func (s *stubCollector) Disks(_ context.Context, path string) ([]collector.DiskI
 	return s.disks, nil
 }
 
-func (s *stubCollector) All(context.Context, string) (*collector.SystemReport, error) {
+func (s *stubCollector) Network(context.Context) ([]collector.NetworkAddress, error) {
+	return s.network, s.err
+}
+
+func (s *stubCollector) All(_ context.Context, _ string, includeNetwork bool) (*collector.SystemReport, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
-	return &collector.SystemReport{
+	report := &collector.SystemReport{
 		Timestamp: time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC),
 		OS:        s.osInfo,
 		CPU:       s.cpuInfo,
 		Memory:    s.memInfo,
 		Disks:     s.disks,
-	}, nil
+	}
+	if includeNetwork {
+		report.Network = s.network
+	}
+	return report, nil
 }
 
 func newStub() *stubCollector {
@@ -84,6 +93,9 @@ func newStub() *stubCollector {
 		disks: []collector.DiskInfo{
 			{Device: "/dev/vda1", Mountpoint: "/", Filesystem: "ext4", TotalBytes: 50 * 1024 * 1024 * 1024},
 		},
+		network: []collector.NetworkAddress{
+			{Interface: "eth0", IP: "192.168.1.10", Version: "IPv4"},
+		},
 	}
 }
 
@@ -112,6 +124,10 @@ func TestCLI_Subcommands(t *testing.T) {
 		{"mem alias", []string{"mem"}, "MEMORY INFORMATION"},
 		{"disk", []string{"disk"}, "/dev/vda1"},
 		{"disk path", []string{"disk", "--path", "/var"}, "/var"},
+		{"ip", []string{"ip"}, "192.168.1.10"},
+		{"net alias", []string{"net"}, "NETWORK / IP ADDRESSES"},
+		{"root --ip", []string{"--ip"}, "192.168.1.10"},
+		{"all --ip", []string{"all", "--ip"}, "192.168.1.10"},
 		{"version", []string{"version"}, "osinfo "},
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -31,16 +32,18 @@ var ignoredFSTypes = map[string]struct{}{
 }
 
 type providers struct {
-	hostInfo     func(context.Context) (*host.InfoStat, error)
-	cpuInfo      func(context.Context) ([]cpu.InfoStat, error)
-	cpuCounts    func(context.Context, bool) (int, error)
-	cpuPercent   func(context.Context, time.Duration, bool) ([]float64, error)
-	virtualMem   func(context.Context) (*mem.VirtualMemoryStat, error)
-	swapMem      func(context.Context) (*mem.SwapMemoryStat, error)
-	partitions   func(context.Context, bool) ([]disk.PartitionStat, error)
-	diskUsage    func(context.Context, string) (*disk.UsageStat, error)
-	now          func() time.Time
-	cpuSampleDur time.Duration
+	hostInfo      func(context.Context) (*host.InfoStat, error)
+	cpuInfo       func(context.Context) ([]cpu.InfoStat, error)
+	cpuCounts     func(context.Context, bool) (int, error)
+	cpuPercent    func(context.Context, time.Duration, bool) ([]float64, error)
+	virtualMem    func(context.Context) (*mem.VirtualMemoryStat, error)
+	swapMem       func(context.Context) (*mem.SwapMemoryStat, error)
+	partitions    func(context.Context, bool) ([]disk.PartitionStat, error)
+	diskUsage     func(context.Context, string) (*disk.UsageStat, error)
+	netInterfaces func() ([]net.Interface, error)
+	ifaceAddrs    func(net.Interface) ([]net.Addr, error)
+	now           func() time.Time
+	cpuSampleDur  time.Duration
 }
 
 // SystemCollector gathers live system telemetry from the host OS via gopsutil.
@@ -52,16 +55,18 @@ type SystemCollector struct {
 func NewSystemCollector() *SystemCollector {
 	return &SystemCollector{
 		p: providers{
-			hostInfo:     host.InfoWithContext,
-			cpuInfo:      cpu.InfoWithContext,
-			cpuCounts:    cpu.CountsWithContext,
-			cpuPercent:   cpu.PercentWithContext,
-			virtualMem:   mem.VirtualMemoryWithContext,
-			swapMem:      mem.SwapMemoryWithContext,
-			partitions:   disk.PartitionsWithContext,
-			diskUsage:    disk.UsageWithContext,
-			now:          time.Now,
-			cpuSampleDur: defaultCPUSampleInterval,
+			hostInfo:      host.InfoWithContext,
+			cpuInfo:       cpu.InfoWithContext,
+			cpuCounts:     cpu.CountsWithContext,
+			cpuPercent:    cpu.PercentWithContext,
+			virtualMem:    mem.VirtualMemoryWithContext,
+			swapMem:       mem.SwapMemoryWithContext,
+			partitions:    disk.PartitionsWithContext,
+			diskUsage:     disk.UsageWithContext,
+			netInterfaces: net.Interfaces,
+			ifaceAddrs:    func(iface net.Interface) ([]net.Addr, error) { return iface.Addrs() },
+			now:           time.Now,
+			cpuSampleDur:  defaultCPUSampleInterval,
 		},
 	}
 }
@@ -216,8 +221,63 @@ func (c *SystemCollector) Disks(ctx context.Context, path string) ([]DiskInfo, e
 	return disks, nil
 }
 
-// All collects OS, CPU, Memory, and Disk metrics concurrently into a SystemReport.
-func (c *SystemCollector) All(ctx context.Context, diskPath string) (*SystemReport, error) {
+// Network collects active non-loopback IP addresses from host network interfaces.
+func (c *SystemCollector) Network(ctx context.Context) ([]NetworkAddress, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	ifaces, err := c.p.netInterfaces()
+	if err != nil {
+		return nil, fmt.Errorf("list network interfaces: %w", err)
+	}
+
+	addrs := make([]NetworkAddress, 0, len(ifaces))
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		ifAddrs, err := c.p.ifaceAddrs(iface)
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range ifAddrs {
+			ip := extractIP(addr)
+			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+				continue
+			}
+
+			ver := "IPv6"
+			if ip.To4() != nil {
+				ver = "IPv4"
+			}
+
+			addrs = append(addrs, NetworkAddress{
+				Interface: iface.Name,
+				IP:        ip.String(),
+				Version:   ver,
+			})
+		}
+	}
+
+	return addrs, nil
+}
+
+func extractIP(addr net.Addr) net.IP {
+	switch v := addr.(type) {
+	case *net.IPNet:
+		return v.IP
+	case *net.IPAddr:
+		return v.IP
+	default:
+		return nil
+	}
+}
+
+// All collects OS, CPU, Memory, Disk, and optionally Network metrics concurrently into a SystemReport.
+func (c *SystemCollector) All(ctx context.Context, diskPath string, includeNetwork bool) (*SystemReport, error) {
 	report := &SystemReport{
 		Timestamp: c.p.now().UTC(),
 	}
@@ -277,6 +337,19 @@ func (c *SystemCollector) All(ctx context.Context, diskPath string) (*SystemRepo
 		}
 		report.Disks = disks
 	}()
+
+	if includeNetwork {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			netAddrs, e := c.Network(ctx)
+			if e != nil {
+				recordErr(e)
+				return
+			}
+			report.Network = netAddrs
+		}()
+	}
 
 	wg.Wait()
 

@@ -7,11 +7,12 @@ import (
 
 // SystemReport aggregates collected system metrics into a single snapshot.
 type SystemReport struct {
-	Timestamp time.Time   `json:"timestamp"`
-	OS        *OSInfo     `json:"os,omitempty"`
-	CPU       *CPUInfo    `json:"cpu,omitempty"`
-	Memory    *MemoryInfo `json:"memory,omitempty"`
-	Disks     []DiskInfo  `json:"disks,omitempty"`
+	Timestamp time.Time        `json:"timestamp"`
+	OS        *OSInfo          `json:"os,omitempty"`
+	CPU       *CPUInfo         `json:"cpu,omitempty"`
+	Memory    *MemoryInfo      `json:"memory,omitempty"`
+	Disks     []DiskInfo       `json:"disks,omitempty"`
+	Network   []NetworkAddress `json:"network,omitempty"`
 }
 
 // OSInfo represents operating system and host metadata.
@@ -58,12 +59,20 @@ type DiskInfo struct {
 	UsedPercent float64 `json:"used_percent"`
 }
 
+// NetworkAddress represents an IP address assigned to an active host network interface.
+type NetworkAddress struct {
+	Interface string `json:"interface"`
+	IP        string `json:"ip"`
+	Version   string `json:"version"`
+}
+
 // Collector defines the contract for gathering system telemetry.
 type Collector interface {
 	OS(ctx context.Context) (*OSInfo, error)
 	CPU(ctx context.Context) (*CPUInfo, error)
 	Memory(ctx context.Context) (*MemoryInfo, error)
 	Disks(ctx context.Context, path string) ([]DiskInfo, error)
-	All(ctx context.Context, diskPath string) (*SystemReport, error)
+	Network(ctx context.Context) ([]NetworkAddress, error)
+	All(ctx context.Context, diskPath string, includeNetwork bool) (*SystemReport, error)
 }
 

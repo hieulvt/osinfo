@@ -18,9 +18,10 @@ import (
 const defaultTimeout = 5 * time.Second
 
 type options struct {
-	output   string
-	timeout  time.Duration
-	diskPath string
+	output    string
+	timeout   time.Duration
+	diskPath  string
+	includeIP bool
 }
 
 // NewRootCmd builds the root osinfo CLI command with injected collector and output streams.
@@ -46,6 +47,7 @@ func NewRootCmd(col collector.Collector, stdout, stderr io.Writer) *cobra.Comman
 
 	rootCmd.PersistentFlags().StringVarP(&opts.output, "output", "o", opts.output, "Output format (table or json)")
 	rootCmd.PersistentFlags().DurationVar(&opts.timeout, "timeout", opts.timeout, "Maximum time allowed for metric collection")
+	rootCmd.Flags().BoolVar(&opts.includeIP, "ip", false, "Include host IP addresses in the report")
 
 	rootCmd.AddCommand(
 		newAllCmd(col, opts, stdout),
@@ -53,6 +55,7 @@ func NewRootCmd(col collector.Collector, stdout, stderr io.Writer) *cobra.Comman
 		newCPUCmd(col, opts, stdout),
 		newRAMCmd(col, opts, stdout),
 		newDiskCmd(col, opts, stdout),
+		newIPCmd(col, opts, stdout),
 		newVersionCmd(opts, stdout),
 	)
 
@@ -68,6 +71,7 @@ func newAllCmd(col collector.Collector, opts *options, stdout io.Writer) *cobra.
 		},
 	}
 	cmd.Flags().StringVar(&opts.diskPath, "path", "", "Optional path to inspect instead of all mounted disks")
+	cmd.Flags().BoolVar(&opts.includeIP, "ip", false, "Include host IP addresses in the report")
 	return cmd
 }
 
@@ -151,6 +155,26 @@ func newDiskCmd(col collector.Collector, opts *options, stdout io.Writer) *cobra
 	return cmd
 }
 
+func newIPCmd(col collector.Collector, opts *options, stdout io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:     "ip",
+		Aliases: []string{"net", "network"},
+		Short:   "Display active host IP addresses",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runWithReport(cmd.Context(), opts, stdout, func(ctx context.Context) (*collector.SystemReport, error) {
+				addrs, err := col.Network(ctx)
+				if err != nil {
+					return nil, err
+				}
+				return &collector.SystemReport{
+					Timestamp: time.Now().UTC(),
+					Network:   addrs,
+				}, nil
+			})
+		},
+	}
+}
+
 func newVersionCmd(opts *options, stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
@@ -174,7 +198,7 @@ func newVersionCmd(opts *options, stdout io.Writer) *cobra.Command {
 
 func runAll(ctx context.Context, col collector.Collector, opts *options, stdout io.Writer) error {
 	return runWithReport(ctx, opts, stdout, func(c context.Context) (*collector.SystemReport, error) {
-		return col.All(c, opts.diskPath)
+		return col.All(c, opts.diskPath, opts.includeIP)
 	})
 }
 

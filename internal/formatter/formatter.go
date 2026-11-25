@@ -81,6 +81,10 @@ func (f *TableFormatter) Format(w io.Writer, report *collector.SystemReport) err
 		addSpacer()
 		renderDisks(w, report.Disks)
 	}
+	if len(report.Network) > 0 {
+		addSpacer()
+		renderNetwork(w, report.Network)
+	}
 
 	return nil
 }
@@ -131,6 +135,16 @@ func renderDisks(w io.Writer, disks []collector.DiskInfo) {
 			FormatBytes(d.FreeBytes),
 			d.UsedPercent,
 		)
+	}
+	_ = tw.Flush()
+}
+
+func renderNetwork(w io.Writer, addrs []collector.NetworkAddress) {
+	fmt.Fprintln(w, "NETWORK / IP ADDRESSES")
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "INTERFACE\tVERSION\tIP ADDRESS")
+	for _, a := range addrs {
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", a.Interface, a.Version, a.IP)
 	}
 	_ = tw.Flush()
 }

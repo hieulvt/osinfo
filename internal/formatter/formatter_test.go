@@ -51,6 +51,13 @@ func sampleReport() *collector.SystemReport {
 				UsedPercent: 25.0,
 			},
 		},
+		Network: []collector.NetworkAddress{
+			{
+				Interface: "eth0",
+				IP:        "10.0.0.15",
+				Version:   "IPv4",
+			},
+		},
 	}
 }
 
@@ -95,6 +102,9 @@ func TestTableFormatter(t *testing.T) {
 		"DISK VOLUMES",
 		"/dev/sda1",
 		"100.00 GiB",
+		"NETWORK / IP ADDRESSES",
+		"eth0",
+		"10.0.0.15",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected output to contain %q, got:\n%s", want, out)

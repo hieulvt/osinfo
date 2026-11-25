@@ -21,12 +21,15 @@ Production-ready CLI tool written in Go to inspect host operating system, CPU, m
 
 ```bash
 osinfo                  # Show all system info (same as `osinfo all`)
+osinfo --ip             # Show all system info including host IP addresses
 osinfo all              # Show OS, CPU, RAM, and Disk volumes
+osinfo all --ip         # Show OS, CPU, RAM, Disk volumes, and IP addresses
 osinfo os               # Show OS, platform, kernel, arch, uptime
 osinfo cpu              # Show CPU model, cores, clock, usage
 osinfo ram              # Show RAM and swap usage (aliases: mem, memory)
 osinfo disk             # Show mounted disk volumes (alias: disks)
 osinfo disk --path /    # Show disk usage for a specific path
+osinfo ip               # Show active host IP addresses (aliases: net, network)
 osinfo version          # Show build and Go runtime version
 ```
 
